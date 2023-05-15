@@ -6,11 +6,12 @@ import (
 	"github.com/TwiN/go-color"
 	"github.com/julienschmidt/httprouter"
 	"github.com/kardianos/service"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,19 +28,17 @@ const (
 )
 
 type SalaryPerUser struct {
-	Id              int              `jsonapi:"primary,salary_per_user"`
-	FirstName       string           `jsonapi:"attr,first_name"`
-	LastName        string           `jsonapi:"attr,last_name"`
-	Email           string           `jsonapi:"attr,email"`
-	Age             int              `jsonapi:"attr,age"`
-	MonthlySalaries []*MonthlySalary `jsonapi:"relation,monthly_salaries"`
+	FirstName     string
+	LastName      string
+	Email         string
+	Age           int
+	MonthlySalary []MonthlySalary
 }
 
 type MonthlySalary struct {
-	Id    int `jsonapi:"primary,monthly_salary"`
-	Basic int `jsonapi:"attr,basic"`
-	HRA   int `jsonapi:"attr,hra"`
-	TA    int `jsonapi:"attr,ta"`
+	Basic int
+	HRA   int
+	TA    int
 }
 
 type program struct{}
@@ -77,13 +76,10 @@ func (p *program) Stop(service.Service) error {
 
 func (p *program) run() {
 	router := httprouter.New()
-	router.ServeFiles("/html/*filepath", http.Dir("html"))
-	router.ServeFiles("/data/*filepath", http.Dir("json"))
+	router.GET("/allusers", loadAllUsersFromJson)
+	router.GET("/user", loadSpecificUserFromJson)
 
-	loadJsonData()
-	//router.POST("/load_json_data", loadJsonData)
-
-	err := http.ListenAndServe(":90", router)
+	err := http.ListenAndServe(":100", router)
 	if err != nil {
 		fmt.Println(color.Ize(color.Red, "ERR [SYSTEM] Problem starting service: "+err.Error()))
 		os.Exit(-1)
@@ -92,22 +88,59 @@ func (p *program) run() {
 
 }
 
-func loadJsonData() {
-	for {
-		file, err := os.Open("test.json")
-		if err != nil {
-			log.Println("Error opening json file:", err)
-		}
+func loadSpecificUserFromJson(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	var url = request.URL.String()
+	if !strings.Contains(url, "?") {
+		fmt.Fprintf(writer, "Bad data request")
+		return
+	}
+	parsedUrl := strings.Split(url, "?")
+	if !strings.Contains(parsedUrl[1], "=") {
+		fmt.Fprintf(writer, "Bad data request")
+		return
+	}
+	letter := strings.Split(parsedUrl[1], "=")[1]
 
-		data, err := ioutil.ReadAll(file)
-		if err != nil {
-			log.Println("Error reading json data:", err)
-		}
+	jsonfile := readJson()
 
-		var jsonfile []SalaryPerUser
-		err = json.Unmarshal(data, &jsonfile)
-		if err != nil {
-			log.Println("Error unmarshalling json data:", err)
+	for i, data := range jsonfile {
+		data.LastName = jsonfile[i].LastName
+		if data.LastName[0:1] == letter {
+			dataForPage, err := json.Marshal(jsonfile[i])
+			if err != nil {
+				fmt.Fprintf(writer, err.Error())
+				return
+			}
+			fmt.Fprintf(writer, string(dataForPage))
+			return
 		}
 	}
+}
+
+func loadAllUsersFromJson(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	jsonfile := readJson()
+	dataForPage, err := json.Marshal(jsonfile)
+	if err != nil {
+		fmt.Fprintf(writer, err.Error())
+	}
+
+	fmt.Fprintf(writer, string(dataForPage))
+}
+
+func readJson() []SalaryPerUser {
+	file, err := os.Open("test.json")
+	if err != nil {
+		log.Println("Error opening json file:", err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		log.Println("Error reading json data:", err)
+	}
+	var jsonfile []SalaryPerUser
+	err = json.Unmarshal(data, &jsonfile)
+	if err != nil {
+		log.Println("Error unmarshalling json data:", err)
+	}
+	return jsonfile
 }
